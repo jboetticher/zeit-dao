@@ -4,10 +4,7 @@
 mod zeit_dao {
     use core::default;
 
-    use ink::{
-        storage::Mapping,
-        prelude::vec::Vec
-    };
+    use ink::{prelude::vec::Vec, storage::Mapping};
 
     #[ink(storage)]
     pub struct ZeitDao {
@@ -15,17 +12,15 @@ mod zeit_dao {
         value: bool,
 
         /* DAO Config */
-
         /// The members that have a vote within the DAO
         members: Vec<AccountId>,
 
         votes: Mapping<(AccountId, u16), bool>,
-
         /* Zeitgeist Components */
     }
 
     /// A smart contract that allows multiple users to come together to create a permissionless
-    /// prediction market. 
+    /// prediction market.
     impl ZeitDao {
         /// Constructor that initializes the `bool` value to the given `init_value`.
         #[ink(constructor)]
@@ -33,7 +28,7 @@ mod zeit_dao {
             Self {
                 value: init_value,
                 members: _members,
-                votes: Mapping::default()
+                votes: Mapping::default(),
             }
         }
 
@@ -43,10 +38,9 @@ mod zeit_dao {
             self.members.iter().map(|x| x.clone()).collect()
         }
 
-
         #[ink(message)]
         pub fn is_member(&self) -> bool {
-
+            self.members.contains(&Self::env().caller())
         }
     }
 
@@ -64,6 +58,21 @@ mod zeit_dao {
             let x = vec![AccountId::from([0x01; 32]), AccountId::from([0x05; 32])];
             let z = ZeitDao::new(false, x.clone());
             assert_eq!(z.members(), x);
+        }
+
+        #[ink::test]
+        fn is_member_works() {
+            let z1 = ZeitDao::new(
+                false,
+                vec![AccountId::from([0x01; 32]), AccountId::from([0x05; 32])]
+            );
+            assert_eq!(z1.is_member(), true);
+
+            let z2: ZeitDao = ZeitDao::new(
+                false,
+                vec![AccountId::from([0x09; 32]), AccountId::from([0x05; 32])]
+            );
+            assert_eq!(z2.is_member(), false);
         }
     }
 }
