@@ -1,15 +1,19 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use ink::primitives::AccountId;
-use scale::MaxEncodedLen;
 use sp_runtime::MultiAddress;
 
 #[ink::contract]
 mod zeit_dao {
     use ink::env::Error as EnvError;
-    use ink::{prelude::vec::Vec, storage::Mapping};
+    use ink::{prelude::{vec::Vec, string::String}, storage::Mapping};
 
-    use crate::{AssetManagerCall, RuntimeCall, SystemCall, ZeitgeistAsset};
+    use crate::{AssetManagerCall, RuntimeCall, ZeitgeistAsset};
+
+    enum ConfigAction {
+        DistributeBalance(u32),
+        AddMember(AccountId)
+    }
 
     #[ink(storage)]
     pub struct ZeitDao {
@@ -20,7 +24,7 @@ mod zeit_dao {
         votes: Mapping<(AccountId, u16), bool>,
 
         /* Zeitgeist Components */
-        messages: Vec<String>,
+        messages: Vec<String>, // TODO: change into proposals, storing RuntimeCall | ConfigAction
     }
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
@@ -57,12 +61,13 @@ mod zeit_dao {
             //     .call_runtime(&RuntimeCall::System(SystemCall::RemarkWithEvent { remark: vec![2] }))
             //     .map_err(Into::into)
 
-            // Should send 0.5 ZTG to the user
+            // TODO: test to see if this works
+            // Should send 0.3 ZTG to the user
             self.env()
                 .call_runtime(&RuntimeCall::AssetManager(AssetManagerCall::Transfer {
                     dest: self.env().caller().into(),
                     currency_id: ZeitgeistAsset::Ztg,
-                    amount: 5_000_000_000,
+                    amount: 3_000_000_000,
                 }))
                 .map_err(Into::into)
         }
@@ -133,23 +138,23 @@ enum RuntimeCall {
     /// https://github.com/zeitgeistpm/zeitgeist/blob/3d9bbff91219bb324f047427224ee318061a6d43/runtime/common/src/lib.rs#L254-L363
     ///
     /// [See here for more.](https://substrate.stackexchange.com/questions/778/how-to-get-pallet-index-u8-of-a-pallet-in-runtime)
-    #[codec(index = 0)]
-    System(SystemCall),
+    // #[codec(index = 0)]
+    // System(SystemCall),
     #[codec(index = 40)]
     AssetManager(AssetManagerCall),
 }
 
-#[derive(scale::Encode)]
-enum SystemCall {
-    /// This index can be found by investigating the pallet dispatchable API. In your
-    /// pallet code, look for `#[pallet::call]` section and check
-    /// `#[pallet::call_index(x)]` attribute of the call. If these attributes are
-    /// missing, use source-code order (0-based).
-    ///
-    /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
-    #[codec(index = 7)]
-    RemarkWithEvent { remark: Vec<u8> },
-}
+// #[derive(scale::Encode)]
+// enum SystemCall {
+//     /// This index can be found by investigating the pallet dispatchable API. In your
+//     /// pallet code, look for `#[pallet::call]` section and check
+//     /// `#[pallet::call_index(x)]` attribute of the call. If these attributes are
+//     /// missing, use source-code order (0-based).
+//     ///
+//     /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
+//     #[codec(index = 7)]
+//     RemarkWithEvent { remark: Vec<u8> },
+// }
 
 #[derive(scale::Encode)]
 enum AssetManagerCall {
