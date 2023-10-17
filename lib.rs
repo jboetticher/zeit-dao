@@ -1,18 +1,29 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(feature = "std"), no_std, no_main)]
 
+use ink::prelude::vec::Vec;
 use ink::primitives::AccountId;
 use sp_runtime::MultiAddress;
 
 #[ink::contract]
 mod zeit_dao {
     use ink::env::Error as EnvError;
-    use ink::{prelude::{vec::Vec, string::String}, storage::Mapping};
+    use ink::{
+        prelude::{string::String, vec::Vec},
+        storage::Mapping,
+    };
 
-    use crate::{AssetManagerCall, RuntimeCall, ZeitgeistAsset};
+    use crate::{RuntimeCall, SystemCall};
 
-    enum ConfigAction {
+    /// @dev Add additional actions that can be proposed
+    #[derive(Debug, Clone, scale::Decode, scale::Encode)]
+    #[cfg_attr(
+        feature = "std",
+        derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
+    )]
+    pub enum ConfigAction {
         DistributeBalance(u32),
-        AddMember(AccountId)
+        AddMember(AccountId),
+        RuntimeCall(RuntimeCall),
     }
 
     #[ink(storage)]
@@ -21,16 +32,23 @@ mod zeit_dao {
         /// The members that have a vote within the DAO.
         members: Vec<AccountId>,
         /// The votes for a specific account ID on a specific proposal version.
-        votes: Mapping<(AccountId, u16), bool>,
+        votes: Mapping<(AccountId, u32), bool>,
 
         /* Zeitgeist Components */
-        messages: Vec<String>, // TODO: change into proposals, storing RuntimeCall | ConfigAction
+        messages: Vec<String>,
+        proposals: Vec<ConfigAction>, // TODO: change into proposals, storing RuntimeCall | ConfigAction
+    }
+
+    #[ink(event)]
+    pub struct TestEvent {
+        sender: AccountId
     }
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum ZeitDAOError {
         CallRuntimeFailed,
+        OnlyMemberAllowed,
     }
 
     impl From<EnvError> for ZeitDAOError {
@@ -52,25 +70,58 @@ mod zeit_dao {
                 members: _members,
                 votes: Mapping::default(),
                 messages: Vec::default(),
+                proposals: Vec::default(),
             }
         }
 
         #[ink(message)]
+        pub fn test_event(&self) {
+            self.env().emit_event(TestEvent { sender: self.env().caller() });
+        }
+
+        #[ink(message)]
         pub fn test_asset_manager(&self) -> Result<(), ZeitDAOError> {
-            // self.env()
-            //     .call_runtime(&RuntimeCall::System(SystemCall::RemarkWithEvent { remark: vec![2] }))
-            //     .map_err(Into::into)
+            let mut test_message = Vec::<u8>::new();
+            test_message.push(2);
+
+            self.env()
+                .call_runtime(&RuntimeCall::System(SystemCall::RemarkWithEvent {
+                    remark: test_message,
+                }))
+                .map_err(Into::into)
 
             // TODO: test to see if this works
             // Should send 0.3 ZTG to the user
-            self.env()
-                .call_runtime(&RuntimeCall::AssetManager(AssetManagerCall::Transfer {
-                    dest: self.env().caller().into(),
-                    currency_id: ZeitgeistAsset::Ztg,
-                    amount: 3_000_000_000,
-                }))
-                .map_err(Into::into)
+            // self.env()
+            //     .call_runtime(&RuntimeCall::AssetManager(AssetManagerCall::Transfer {
+            //         dest: self.env().caller().into(),
+            //         currency_id: ZeitgeistAsset::Ztg,
+            //         amount: 3_000_000_000,
+            //     }))
+            //     .map_err(Into::into)
         }
+
+        /// Allows a member to create a new proposal for other members to vote on.
+        /// @returns The proposal action.
+        #[ink(message)]
+        pub fn propose(&mut self, action: ConfigAction) -> Result<u32, ZeitDAOError> {
+            self.only_member()?;
+            self.proposals.push(action);
+            Ok(self.proposals.len() as u32 - 1)
+        }
+
+        /// Allows a member to vote on a proposal.
+        /// @param id The id of the proposal to vote on.
+        /// @param direction True if voting yes, false if voting no.
+        /// @returns The proposal action.
+        #[ink(message)]
+        pub fn vote(&mut self, id: u32, direction: bool) -> Result<(), ZeitDAOError> {
+            self.only_member()?;
+            self.votes.insert((self.env().caller(), id), &direction);
+            Ok(())
+        }
+
+        /* ==================== READ ONLY ==================== */
 
         /// Returns all of the members within the DAO
         #[ink(message)]
@@ -81,6 +132,13 @@ mod zeit_dao {
         #[ink(message)]
         pub fn is_member(&self) -> bool {
             self.members.contains(&Self::env().caller())
+        }
+
+        fn only_member(&self) -> Result<(), ZeitDAOError> {
+            if !self.is_member() {
+                return Err(ZeitDAOError::OnlyMemberAllowed);
+            }
+            Ok(())
         }
     }
 
@@ -129,7 +187,11 @@ mod zeit_dao {
 /// You can investigate the full `RuntimeCall` definition by either expanding
 /// `construct_runtime!` macro application or by using secondary tools for reading chain
 /// metadata, like `subxt`.
-#[derive(scale::Encode)]
+#[derive(Debug, Clone, scale::Decode, scale::Encode)]
+#[cfg_attr(
+    feature = "std",
+    derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
+)]
 enum RuntimeCall {
     /// This index can be found by investigating runtime configuration. You can check the
     /// pallet order inside `construct_runtime!` block and read the position of your
@@ -138,23 +200,29 @@ enum RuntimeCall {
     /// https://github.com/zeitgeistpm/zeitgeist/blob/3d9bbff91219bb324f047427224ee318061a6d43/runtime/common/src/lib.rs#L254-L363
     ///
     /// [See here for more.](https://substrate.stackexchange.com/questions/778/how-to-get-pallet-index-u8-of-a-pallet-in-runtime)
-    // #[codec(index = 0)]
-    // System(SystemCall),
-    #[codec(index = 40)]
-    AssetManager(AssetManagerCall),
+    #[codec(index = 0)]
+    System(SystemCall),
+    // #[codec(index = 40)]
+    // AssetManager(AssetManagerCall),
 }
 
-// #[derive(scale::Encode)]
-// enum SystemCall {
-//     /// This index can be found by investigating the pallet dispatchable API. In your
-//     /// pallet code, look for `#[pallet::call]` section and check
-//     /// `#[pallet::call_index(x)]` attribute of the call. If these attributes are
-//     /// missing, use source-code order (0-based).
-//     ///
-//     /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
-//     #[codec(index = 7)]
-//     RemarkWithEvent { remark: Vec<u8> },
-// }
+#[derive(Debug, Clone, scale::Decode, scale::Encode)]
+#[cfg_attr(
+    feature = "std",
+    derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
+)]
+enum SystemCall {
+    /// This index can be found by investigating the pallet dispatchable API. In your
+    /// pallet code, look for `#[pallet::call]` section and check
+    /// `#[pallet::call_index(x)]` attribute of the call. If these attributes are
+    /// missing, use source-code order (0-based).
+    ///
+    /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
+    #[codec(index = 7)]
+    RemarkWithEvent { remark: Vec<u8> },
+}
+
+/*
 
 #[derive(scale::Encode)]
 enum AssetManagerCall {
@@ -177,3 +245,5 @@ pub enum ZeitgeistAsset {
     Ztg,       // default
     ForeignAsset(u32),
 }
+
+*/

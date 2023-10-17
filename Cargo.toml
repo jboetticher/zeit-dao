@@ -23,12 +23,8 @@ sp-runtime = { version = "24.0.0", default-features = false }
 ink_e2e = { version = "4.3" }
 
 [lib]
-name = "flipper"
+name = "zeit_dao"
 path = "lib.rs"
-crate-type = [
-	# Used for normal contract Wasm blobs.
-	"cdylib",
-]
 
 [features]
 default = ["std"]
