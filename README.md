@@ -6,10 +6,10 @@
 
 ## Commands
 
-Start local node:  
+Start local Zeitgeist node:  
 
 ```bash
-./substrate-contracts-node --log info,runtime::contracts=debug 2>&1
+../../zeitgeist/target/release/zeitgeist
 ```
 
 Instantiate:
