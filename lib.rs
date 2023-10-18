@@ -101,7 +101,7 @@ mod zeit_dao {
         }
 
         #[ink(message)]
-        pub fn test_asset_manager(&self) -> Result<(), ZeitDAOError> {
+        pub fn test_asset_manager(&mut self) -> Result<(), ZeitDAOError> {
             // TODO: test to see if this works
             // Should send 1 ZTG to the user
             self.env()
