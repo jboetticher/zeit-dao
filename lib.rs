@@ -11,7 +11,7 @@ use sp_runtime::MultiAddress;
 /// small (up to around 10) amount of users.
 #[ink::contract]
 mod zeit_dao {
-    use crate::{RuntimeCall, AssetManagerCall, PredictionMarketsCall, ZeitgeistAsset};
+    use crate::{AssetManagerCall, PredictionMarketsCall, RuntimeCall, ZeitgeistAsset};
     use ink::env::Error as EnvError;
     use ink::{prelude::vec::Vec, storage::Mapping};
 
@@ -135,17 +135,39 @@ mod zeit_dao {
                 .map_err(Into::into)
         }
 
-        // THIS IS BEING USED: use ink::prelude::vec::Vec;
-        // #[ink(message)]
-        // pub fn test_encoding(&mut self) -> Result<u32, ZeitDAOError> {
-        //     let mut x: Vec<u8> = scale::Encode::encode(&5);
-        //     match <u32 as scale::Decode>::decode(&mut TransactionInput(x)) {
-        //         Ok(value) => Ok(value),
-        //         Err(_) => Err(ZeitDAOError::ErrorDecodingProposalData)
-        //     }
-        // }
-
         pub fn test_create_market(&mut self) -> Result<(), ZeitDAOError> {
+            let sha3: [u8; 50] = [
+                0x15, 0x30, 0x74, 0x0b, 0x1c, 0x25, 0x97, 0x6a, 0x79, 0xa1,
+                0xd5, 0xe7, 0x5e, 0xfa, 0xb7, 0x70, 0x59, 0x61, 0x7c, 0xa2,
+                0x26, 0x60, 0xe4, 0x3b, 0x2a, 0xa0, 0x5a, 0xe1, 0x4a, 0x59,
+                0x94, 0xf9, 0xda, 0x2d, 0x9d, 0x71, 0xe4, 0x47, 0x37, 0x77,
+                0xdd, 0x3d, 0x59, 0xac, 0x8c, 0x9a, 0x46, 0x1c, 0x7a, 0x68
+            ];
+
+            self.env()
+                .call_runtime(&RuntimeCall::PredictionMarkets(
+                    PredictionMarketsCall::CreateCpmmMarketAndDeployAssets {
+                        base_asset: ZeitgeistAsset::Ztg,
+                        creator_fee: 1000,
+                        oracle: self.env().account_id(), // Puts self as oracle
+                        period: crate::MarketPeriod::Block(core::ops::Range {
+                            start: (self.env().block_number() + 1) as u64,
+                            end: (self.env().block_number() + 150) as u64,
+                        }),
+                        deadlines: crate::Deadlines {
+                            grace_period: 0,
+                            oracle_duration: 28_800,
+                            dispute_duration: 28_800,
+                        },
+                        metadata: crate::MultiHash::Sha3_384(sha3),
+                        market_type: crate::MarketType::Categorical(2),
+                        dispute_mechanism: crate::MarketDisputeMechanism::Authorized,
+                        swap_fee: 10000,
+                        amount: 1000,
+                        weights: Vec::from([0, 1]),
+                    },
+                ))
+                .map_err(Into::<ZeitDAOError>::into)?;
             Ok(())
         }
 
@@ -318,7 +340,6 @@ enum SystemCall {
     /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
     #[codec(index = 7)]
     RemarkWithEvent { remark: Vec<u8> },
-
 }
 
 #[derive(scale::Encode, scale::Decode)]
@@ -333,25 +354,27 @@ enum AssetManagerCall {
     },
 }
 
-#[derive(scale::Encode, scale::Decode)] 
+#[derive(scale::Encode, scale::Decode)]
 enum PredictionMarketsCall {
     CreateCpmmMarketAndDeployAssets {
         base_asset: ZeitgeistAsset,
         // Used to be PerBill. I believe it's a u32 under the hood
         // https://paritytech.github.io/polkadot-sdk/master/src/sp_arithmetic/per_things.rs.html#1853
-        creator_fee: u32,       
+        creator_fee: u32,
         oracle: AccountId,
         // Used to be u64, MomentOf<T>, but unsure how to subsitute MomentOf<T>
         // Who needs timestamps anyways?
-        period: MarketPeriod<u64, u64>, 
+        period: MarketPeriod<u64, u64>,
         deadlines: Deadlines<u64>,
         metadata: MultiHash,
         market_type: MarketType,
         dispute_mechanism: MarketDisputeMechanism,
-        #[codec(compact)] swap_fee: u128,
-        #[codec(compact)] amount: u128,
+        #[codec(compact)]
+        swap_fee: u128,
+        #[codec(compact)]
+        amount: u128,
         weights: Vec<u128>,
-    }
+    },
 }
 
 // endregion
