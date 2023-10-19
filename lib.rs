@@ -135,6 +135,7 @@ mod zeit_dao {
                 .map_err(Into::into)
         }
 
+        #[ink(message, payable)]
         pub fn test_create_market(&mut self) -> Result<(), ZeitDAOError> {
             let sha3: [u8; 50] = [
                 0x15, 0x30, 0x74, 0x0b, 0x1c, 0x25, 0x97, 0x6a, 0x79, 0xa1,
