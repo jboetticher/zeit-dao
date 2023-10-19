@@ -357,6 +357,7 @@ enum AssetManagerCall {
 
 #[derive(scale::Encode, scale::Decode)]
 enum PredictionMarketsCall {
+    #[codec(index = 7)]
     CreateCpmmMarketAndDeployAssets {
         base_asset: ZeitgeistAsset,
         // Used to be PerBill. I believe it's a u32 under the hood
