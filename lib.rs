@@ -4,15 +4,25 @@ use ink::prelude::vec::Vec;
 use ink::primitives::AccountId;
 use sp_runtime::MultiAddress;
 
+// TODO: make it like a multisig and/or DAO, then just call self for DAO configuration instead
+// of encoding all configuration possibilties into an enum
+
 /// A smart contract meant to decentralize the permissionless creation of prediction markets between a
 /// small (up to around 10) amount of users.
 #[ink::contract]
 mod zeit_dao {
-    use crate::{AssetManagerCall, RuntimeCall, SystemCall, TestRuntimeCall, ZeitgeistAsset};
+    use crate::{RuntimeCall, AssetManagerCall, PredictionMarketsCall, ZeitgeistAsset};
     use ink::env::Error as EnvError;
     use ink::{prelude::vec::Vec, storage::Mapping};
 
     // region: Data Structures
+
+    struct TransactionInput<'a>(&'a [u8]);
+    impl<'a> scale::Encode for TransactionInput<'a> {
+        fn encode_to<T: scale::Output + ?Sized>(&self, dest: &mut T) {
+            dest.write(self.0);
+        }
+    }
 
     /// @dev Add additional actions that can be proposed
     #[derive(Debug, Clone, scale::Decode, scale::Encode)]
@@ -20,13 +30,24 @@ mod zeit_dao {
         feature = "std",
         derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
     )]
+
     pub enum DAOAction {
-        DistributeBalance(u32),
-        AddMember(AccountId),
-        RemoveMember(AccountId),
-        // RuntimeCall(RuntimeCall),
-        Batch(Vec<DAOAction>),
+        // Config
+
+        // Runtime Actions
+        RemarkWithEvent,
     }
+
+    #[derive(Debug, Clone, scale::Decode, scale::Encode)]
+    #[cfg_attr(
+        feature = "std",
+        derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
+    )]
+    pub struct StorableRuntimeAction {
+        selector: DAOAction,
+        data: Vec<u8>,
+    }
+
     // endregion
 
     // region: Events & Errors
@@ -48,6 +69,7 @@ mod zeit_dao {
     pub enum ZeitDAOError {
         CallRuntimeFailed,
         OnlyMemberAllowed,
+        OnlySelfAllowed,
         ProposalDoesNotExist,
         NotEnoughVotesApproved,
     }
@@ -73,7 +95,7 @@ mod zeit_dao {
         quorum: u32,
 
         /* Zeitgeist Components */
-        proposals: Vec<DAOAction>,
+        proposals: Vec<StorableRuntimeAction>,
     }
 
     impl ZeitDao {
@@ -105,7 +127,7 @@ mod zeit_dao {
             // TODO: test to see if this works
             // Should send 1 ZTG to the user
             self.env()
-                .call_runtime(&TestRuntimeCall::AssetManager(AssetManagerCall::Transfer {
+                .call_runtime(&RuntimeCall::AssetManager(AssetManagerCall::Transfer {
                     dest: self.env().caller().into(),
                     currency_id: ZeitgeistAsset::Ztg,
                     amount: 10_000_000_000,
@@ -113,12 +135,26 @@ mod zeit_dao {
                 .map_err(Into::into)
         }
 
+        // THIS IS BEING USED: use ink::prelude::vec::Vec;
+        // #[ink(message)]
+        // pub fn test_encoding(&mut self) -> Result<u32, ZeitDAOError> {
+        //     let mut x: Vec<u8> = scale::Encode::encode(&5);
+        //     match <u32 as scale::Decode>::decode(&mut TransactionInput(x)) {
+        //         Ok(value) => Ok(value),
+        //         Err(_) => Err(ZeitDAOError::ErrorDecodingProposalData)
+        //     }
+        // }
+
+        pub fn test_create_market(&mut self) -> Result<(), ZeitDAOError> {
+            Ok(())
+        }
+
         // endregion
 
         /// Allows a member to create a new proposal for other members to vote on.
         /// @returns The proposal action.
         #[ink(message)]
-        pub fn propose(&mut self, action: DAOAction) -> Result<u32, ZeitDAOError> {
+        pub fn propose(&mut self, action: StorableRuntimeAction) -> Result<u32, ZeitDAOError> {
             self.only_member()?;
             self.proposals.push(action);
             Ok(self.proposals.len() as u32 - 1)
@@ -133,53 +169,32 @@ mod zeit_dao {
             Ok(())
         }
 
-        #[ink(message)]
-        pub fn execute(&mut self, id: u32) -> Result<(), ZeitDAOError> {
-            self.check_proposal_exists(id)?;
+        // TODO: implement propose, vote, execute by stealing from the multisig
+        // https://github.com/paritytech/ink-examples/blob/b5a5a554f85e9bd07d288ab319d14f15e6e509af/multisig/lib.rs
 
-            // Counts the total amount of votes
-            // TODO: optimize for large scale DAOs
-            let vote_total = self.members.iter().fold(0, |acc, m| {
-                if self.votes.get((m, id)).unwrap_or(false) {
-                    acc + 1
-                } else {
-                    acc
-                }
-            });
-            if vote_total < self.quorum {
-                return Err(ZeitDAOError::NotEnoughVotesApproved);
-            }
+        // region: DAO Config Functions
 
-            let action = &self.proposals[id as usize];
-            match action {
-                DAOAction::DistributeBalance(amount) => {
-                    // Will likely cause a revert if the amount is too large
-                    let amount_per_member = amount / self.members.len() as u32;
-                    self.env().call_runtime(&TestRuntimeCall::AssetManager(
-                        AssetManagerCall::Transfer {
-                            dest: self.env().caller().into(),
-                            currency_id: ZeitgeistAsset::Ztg,
-                            amount: amount_per_member as u128,
-                        },
-                    ))?;
-                }
-                DAOAction::AddMember(new_member) => self.members.push(*new_member),
-                DAOAction::RemoveMember(member) => self.members.retain(|m| m != member),
-                // DAOAction::RuntimeCall(_) => todo!(),
-                _ => todo!(),
-            };
-
-            // Emit event
-            self.env().emit_event(ProposalExecuted {
-                executor: self.env().caller(),
-                id,
-                action: action.clone(),
-            });
-
-            Ok(())
+        pub fn distribute(&mut self, balance: u128, target: AccountId) -> Result<(), ZeitDAOError> {
+            self.only_self()?;
+            self.env()
+                .call_runtime(&RuntimeCall::AssetManager(AssetManagerCall::Transfer {
+                    dest: target.into(),
+                    currency_id: ZeitgeistAsset::Ztg,
+                    amount: balance,
+                }))
+                .map_err(Into::into)
         }
 
-        /* ==================== READ ONLY ==================== */
+        /*
+        AddMember(AccountId),
+        RemoveMember(AccountId),
+        RuntimeCall(StorableRuntimeAction),
+        Batch(Vec<DAOAction>),
+        */
+
+        // endregion
+
+        // region: READ ONLY
 
         /// Returns all of the members within the DAO
         #[ink(message)]
@@ -195,7 +210,7 @@ mod zeit_dao {
 
         /// Returns the information about a specific proposal. None if proposal does not exist.
         #[ink(message)]
-        pub fn proposal(&self, id: u32) -> Option<DAOAction> {
+        pub fn proposal(&self, id: u32) -> Option<StorableRuntimeAction> {
             if self.proposals.len() >= id as usize {
                 None
             } else {
@@ -203,11 +218,20 @@ mod zeit_dao {
             }
         }
 
+        // endregion
+
         /* ================ PRIVATE / MODIFIERS ================ */
 
         fn only_member(&self) -> Result<(), ZeitDAOError> {
             if !self.is_member() {
                 return Err(ZeitDAOError::OnlyMemberAllowed);
+            }
+            Ok(())
+        }
+
+        fn only_self(&self) -> Result<(), ZeitDAOError> {
+            if self.env().caller() != self.env().account_id() {
+                return Err(ZeitDAOError::OnlySelfAllowed);
             }
             Ok(())
         }
@@ -253,6 +277,8 @@ mod zeit_dao {
     }
 }
 
+// region: Runtime Calls
+
 // TODO: only these calls are allowed https://github.com/zeitgeistpm/zeitgeist/blob/3d9bbff91219bb324f047427224ee318061a6d43/runtime/battery-station/src/lib.rs#L121-L164
 
 /// A part of the runtime dispatchable API.
@@ -265,11 +291,7 @@ mod zeit_dao {
 /// You can investigate the full `RuntimeCall` definition by either expanding
 /// `construct_runtime!` macro application or by using secondary tools for reading chain
 /// metadata, like `subxt`.
-#[derive(Debug, Clone, scale::Decode, scale::Encode)]
-#[cfg_attr(
-    feature = "std",
-    derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
-)]
+#[derive(scale::Encode, scale::Decode)]
 enum RuntimeCall {
     /// This index can be found by investigating runtime configuration. You can check the
     /// pallet order inside `construct_runtime!` block and read the position of your
@@ -280,15 +302,13 @@ enum RuntimeCall {
     /// [See here for more.](https://substrate.stackexchange.com/questions/778/how-to-get-pallet-index-u8-of-a-pallet-in-runtime)
     #[codec(index = 0)]
     System(SystemCall),
-    // #[codec(index = 40)]
-    // AssetManager(AssetManagerCall),
+    #[codec(index = 40)]
+    AssetManager(AssetManagerCall),
+    #[codec(index = 57)]
+    PredictionMarkets(PredictionMarketsCall),
 }
 
-#[derive(Debug, Clone, scale::Decode, scale::Encode)]
-#[cfg_attr(
-    feature = "std",
-    derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
-)]
+#[derive(scale::Encode, scale::Decode)]
 enum SystemCall {
     /// This index can be found by investigating the pallet dispatchable API. In your
     /// pallet code, look for `#[pallet::call]` section and check
@@ -298,21 +318,10 @@ enum SystemCall {
     /// https://github.com/paritytech/substrate/blob/033d4e86cc7eff0066cd376b9375f815761d653c/frame/system/src/lib.rs#L512-L523
     #[codec(index = 7)]
     RemarkWithEvent { remark: Vec<u8> },
+
 }
 
-/* THE FOLLOWING FEATURES ARE STILL IN DEVELOPMENT AND ARE POO POO */
-
-#[derive(Debug, Clone, scale::Decode, scale::Encode)]
-enum TestRuntimeCall {
-    #[codec(index = 40)]
-    AssetManager(AssetManagerCall),
-}
-
-#[derive(Debug, Clone, scale::Decode, scale::Encode)]
-// #[cfg_attr(
-//     feature = "std",
-//     derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
-// )]
+#[derive(scale::Encode, scale::Decode)]
 enum AssetManagerCall {
     // https://github.com/open-web3-stack/open-runtime-module-library/blob/22a4f7b7d1066c1a138222f4546d527d32aa4047/currencies/src/lib.rs#L129-L131C19
     #[codec(index = 0)]
@@ -324,12 +333,33 @@ enum AssetManagerCall {
     },
 }
 
-#[derive(Debug, Clone, scale::Decode, scale::Encode)]
-#[cfg_attr(
-    feature = "std",
-    derive(ink::storage::traits::StorageLayout, scale_info::TypeInfo)
-)]
-pub enum ZeitgeistAsset {
+#[derive(scale::Encode, scale::Decode)] 
+enum PredictionMarketsCall {
+    CreateCpmmMarketAndDeployAssets {
+        base_asset: ZeitgeistAsset,
+        // Used to be PerBill. I believe it's a u32 under the hood
+        // https://paritytech.github.io/polkadot-sdk/master/src/sp_arithmetic/per_things.rs.html#1853
+        creator_fee: u32,       
+        oracle: AccountId,
+        // Used to be u64, MomentOf<T>, but unsure how to subsitute MomentOf<T>
+        // Who needs timestamps anyways?
+        period: MarketPeriod<u64, u64>, 
+        deadlines: Deadlines<u64>,
+        metadata: MultiHash,
+        market_type: MarketType,
+        dispute_mechanism: MarketDisputeMechanism,
+        #[codec(compact)] swap_fee: u128,
+        #[codec(compact)] amount: u128,
+        weights: Vec<u128>,
+    }
+}
+
+// endregion
+
+// region: Zeitgeist Types
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+enum ZeitgeistAsset {
     CategoricalOutcome, //(MI, CategoryIndex),
     ScalarOutcome,      //(MI, ScalarPosition),
     CombinatorialOutcome,
@@ -337,3 +367,38 @@ pub enum ZeitgeistAsset {
     Ztg,       // default
     ForeignAsset(u32),
 }
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+pub enum MarketDisputeMechanism {
+    Authorized,
+    Court,
+    SimpleDisputes,
+}
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+pub enum MarketType {
+    /// A market with a number of categorical outcomes.
+    Categorical(u16),
+    /// A market with a range of potential outcomes.
+    Scalar(core::ops::RangeInclusive<u128>),
+}
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+pub enum MultiHash {
+    Sha3_384([u8; 50]),
+}
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+pub struct Deadlines<BN> {
+    pub grace_period: BN,
+    pub oracle_duration: BN,
+    pub dispute_duration: BN,
+}
+
+#[derive(scale::Encode, scale::Decode, Clone, PartialEq)]
+pub enum MarketPeriod<BN, M> {
+    Block(core::ops::Range<BN>),
+    Timestamp(core::ops::Range<M>),
+}
+
+// endregion
